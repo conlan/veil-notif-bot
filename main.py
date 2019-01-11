@@ -1,19 +1,12 @@
-from flask import Flask, current_app
+from flask import Flask
 from flask import request
 
 from google.cloud import datastore
 from google.cloud import tasks_v2beta3
 from google.protobuf import timestamp_pb2
 
-import ssl
-import math
-
-import locale
-
 import urllib.request
 import urllib.parse
-
-import twitter
 
 from datetime import datetime
 from datetime import timedelta
@@ -32,8 +25,9 @@ from eth_utils import (
 
 import json
 import requests
-
 import web3;
+import ssl
+import twitter
 
 # API
 VEIL_MARKET_URL = "https://kovan.veil.co/market/"
@@ -93,10 +87,29 @@ def index():
 
 @app.route('/refreshchannel')
 def refresh_channel():
-	channel = exchange_address = request.args.get("channel");
+	channel = request.args.get("channel");
 
 	if (channel is None):
-		return "XX";
+		return "XX"; # TODO
+
+	channel = channel.lower();
+
+	ds = datastore.Client();
+
+	channel_data = None;
+
+	query = ds.query(kind='channel');
+
+	query_iterator = query.fetch();
+	for entity in query_iterator:
+		if (entity["id"] == channel):
+			channel_data = entity;
+			break;
+
+	if (channel_data is None):
+		return "xx";
+
+	tweetedList = channel_data["tweetedList"];
 
 	ctx = ssl.create_default_context()
 	ctx.check_hostname = False
@@ -112,8 +125,27 @@ def refresh_channel():
 
 	results = markets["data"]["results"];
 
+	# reverse the results so that the oldest market is first
+	results.reverse();
+
+	has_untweeted_markets = False;
+
 	for market in results:
 		market_uid = market["uid"];
+
+		# continue if we encounter a market already tweeted
+		if (market_uid in tweetedList):
+			print("Already tweeted " + market_uid);
+			continue;
+
+		# check if we already tweeted something, if so then we need to call this quickly again to work through the rest
+		# of the list
+		if (len(tweet_text) > 0):
+			has_untweeted_markets = True;
+			break;
+
+		# add this market id to the tweeted list so that we don't tweet it again subsequently
+		tweetedList.append(market_uid);
 		
 		market_title = market["name"];
 
@@ -142,6 +174,7 @@ def refresh_channel():
 		if (market_type == "scalar"):
 			market_denomination = market["denomination"];
 
+			# format correctly for USD denomination
 			market_min_price = market["min_price"];
 			market_min_price = str(from_wei(int(market_min_price), 'ether'));
 			if (market_denomination == "USD"):
@@ -165,13 +198,28 @@ def refresh_channel():
 		tweet_text.append(" ");
 		tweet_text.append(market_url);
 
+		# append channel as a hashtag if possible
 		if (market_channel != None):
 			tweet_text.append(" #");
 			tweet_text.append(market_channel);
 
 		print("".join(tweet_text));
 
-	return "x";
+		# update the tweeted list
+		channel_data.update({
+			"tweetedList" : tweetedList
+	    })
+
+		ds.put(channel_data);
+
+		# TODO tweet status here
+
+	if (has_untweeted_markets):
+		# TODO schedule a follow up task quickly after this
+	else:
+		# TODO schedule a follow up task leisurely after this
+
+	return "{x}";
 
 if __name__ == '__main__':
     # This is used when running locally only. When deploying to Google App
