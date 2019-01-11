@@ -130,6 +130,8 @@ def refresh_channel():
 
 	has_untweeted_markets = False;
 
+	tweet_text = [];
+
 	for market in results:
 		market_uid = market["uid"];
 
@@ -164,8 +166,7 @@ def refresh_channel():
 
 		market_channel = market["channel"];
 
-		# compose the tweet
-		tweet_text = [];
+		# compose the tweet		
 		tweet_text.append("\"");
 		tweet_text.append(market_title);
 		tweet_text.append("\"");
@@ -203,20 +204,23 @@ def refresh_channel():
 			tweet_text.append(" #");
 			tweet_text.append(market_channel);
 
-		print("".join(tweet_text));
+		# append this channel's emoji decoration
+		tweet_text.append(" ");
+		tweet_text.append(channel_data["decoration"]);
 
 		# update the tweeted list
 		channel_data.update({
 			"tweetedList" : tweetedList
 	    })
-
 		ds.put(channel_data);
 
-		# TODO tweet status here
+		# make the tweet
+		tweetStatus("".join(tweet_text));
 
-	if (has_untweeted_markets):
+
+	# if (has_untweeted_markets):
 		# TODO schedule a follow up task quickly after this
-	else:
+	# else:
 		# TODO schedule a follow up task leisurely after this
 
 	return "{x}";
