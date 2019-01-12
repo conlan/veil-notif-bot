@@ -47,18 +47,18 @@ def tweetStatus(status):
 	# load these from a gitignored file
 	twitter_credentials = json.loads(open("./twitter_credentials.json", "r").read());
 
-	# twitter_consumer_key = twitter_credentials["twitter_consumer_key"];
-	# twitter_consumer_secret = twitter_credentials["twitter_consumer_secret"];
-	# twitter_access_token = twitter_credentials["twitter_access_token"];
-	# twitter_token_secret = twitter_credentials["twitter_token_secret"];
+	twitter_consumer_key = twitter_credentials["twitter_consumer_key"];
+	twitter_consumer_secret = twitter_credentials["twitter_consumer_secret"];
+	twitter_access_token = twitter_credentials["twitter_access_token"];
+	twitter_token_secret = twitter_credentials["twitter_token_secret"];
 
-	# print(status);
+	print(status);
 
-	# api = twitter.Api(consumer_key=twitter_consumer_key,
- #                  consumer_secret=twitter_consumer_secret,
- #                  access_token_key=twitter_access_token,
- #                  access_token_secret=twitter_token_secret)
-	# api.PostUpdate(status)
+	api = twitter.Api(consumer_key=twitter_consumer_key,
+                  consumer_secret=twitter_consumer_secret,
+                  access_token_key=twitter_access_token,
+                  access_token_secret=twitter_token_secret)
+	api.PostUpdate(status)
 
 def scheduleRefreshTask(delay_in_seconds):
 	# schedule the next call to refresh debts here
@@ -154,6 +154,7 @@ def refresh_channel():
 		# replace any keywords with hashtags
 		# TODO put keywords into a map object
 		market_title = market_title.replace(" Ethereum", " #Ethereum");
+		market_title = market_title.replace(" Bitcoin", " #Bitcoin");
 		market_title = market_title.replace(" ZRX", " $ZRX");
 		market_title = market_title.replace(" BTC", " $BTC");
 		market_title = market_title.replace(" REP", " $REP");
