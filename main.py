@@ -25,25 +25,16 @@ from eth_utils import (
 
 import json
 import requests
-import web3;
 import ssl
 import twitter
 
 # API
 VEIL_MARKET_URL = "https://kovan.veil.co/market/"
-VEIL_ENDPOINT_MARKETS = "https://api.kovan.veil.market/api/v1/markets?status=open&channel=";
-
-# ABI
-
-
-# Provider
-providerURL = "https://chainkit-1.dev.kyokan.io/eth";
-
-web3 = web3.Web3(web3.Web3.HTTPProvider(providerURL))
+VEIL_ENDPOINT_MARKETS = "https://api.kovan.veil.market/api/v1/markets?status=open";
 
 app = Flask(__name__)
 
-def tweetStatus(status):
+def tweetStatus(status, media):
 	# load these from a gitignored file
 	twitter_credentials = json.loads(open("./twitter_credentials.json", "r").read());
 
@@ -58,7 +49,9 @@ def tweetStatus(status):
                   consumer_secret=twitter_consumer_secret,
                   access_token_key=twitter_access_token,
                   access_token_secret=twitter_token_secret)
-	api.PostUpdate(status)
+	
+	api.PostUpdate(status, media=media);
+
 
 def scheduleRefreshTask(delay_in_seconds):
 	# schedule the next call to refresh debts here
@@ -85,37 +78,32 @@ def scheduleRefreshTask(delay_in_seconds):
 def index():
 	return "{}";
 
-@app.route('/refreshchannel')
-def refresh_channel():
-	channel = request.args.get("channel");
-
-	if (channel is None):
-		return "XX"; # TODO
-
-	channel = channel.lower();
-
+@app.route('/refreshmarkets')
+def refresh_markets():
 	ds = datastore.Client();
 
-	channel_data = None;
+	defaults_data = None;
 
-	query = ds.query(kind='channel');
+	query = ds.query(kind='defaults');
 
 	query_iterator = query.fetch();
-	for entity in query_iterator:
-		if (entity["id"] == channel):
-			channel_data = entity;
-			break;
 
-	if (channel_data is None):
+	for entity in query_iterator:
+		defaults_data = entity;
+		break;
+
+	if (defaults_data is None):
 		return "xx";
 
-	tweetedList = channel_data["tweetedList"];
+	tweetedList = defaults_data["tweetedList"];
+
+	decorations = json.loads(defaults_data["decorations"]);
 
 	ctx = ssl.create_default_context()
 	ctx.check_hostname = False
 	ctx.verify_mode = ssl.CERT_NONE
 
-	url = VEIL_ENDPOINT_MARKETS + channel;
+	url = VEIL_ENDPOINT_MARKETS;
 
 	print(url);
 
@@ -167,12 +155,21 @@ def refresh_channel():
 
 		market_channel = market["channel"];
 
+		# metadata work
+		market_metadata = market["metadata"];
+
+		market_media = None;
+		
+		if ((market_metadata is None) == False):
+			if ("image_url" in market_metadata):
+				market_media = market_metadata["image_url"];
+
 		# compose the tweet		
 		tweet_text.append("\"");
 		tweet_text.append(market_title);
 		tweet_text.append("\"");
 
-		# TODO scalar work
+		# scalar work
 		if (market_type == "scalar"):
 			market_denomination = market["denomination"];
 
@@ -205,18 +202,19 @@ def refresh_channel():
 			tweet_text.append(" #");
 			tweet_text.append(market_channel);
 
-		# append this channel's emoji decoration
-		tweet_text.append(" ");
-		tweet_text.append(channel_data["decoration"]);
+			if (market_channel in decorations):
+				# append this channel's emoji decoration
+				tweet_text.append(" ");
+				tweet_text.append(decorations[market_channel]);
 
 		# update the tweeted list
-		channel_data.update({
+		defaults_data.update({
 			"tweetedList" : tweetedList
 	    })
-		ds.put(channel_data);
+		ds.put(defaults_data);
 
 		# make the tweet
-		tweetStatus("".join(tweet_text));
+		tweetStatus("".join(tweet_text), market_media);
 
 
 	# if (has_untweeted_markets):
