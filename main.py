@@ -30,7 +30,7 @@ import twitter
 
 # API
 VEIL_MARKET_URL = "https://kovan.veil.co/market/"
-VEIL_ENDPOINT_MARKETS = "https://api.kovan.veil.market/api/v1/markets?status=open";
+VEIL_ENDPOINT_MARKETS = "https://api.kovan.veil.market/api/v1/markets?status=open&page=0";
 
 app = Flask(__name__)
 
@@ -57,22 +57,22 @@ def scheduleRefreshTask(delay_in_seconds):
 	# schedule the next call to refresh debts here
 	task_client = tasks_v2beta3.CloudTasksClient()
 
-	# # Convert "seconds from now" into an rfc3339 datetime string.
-	# d = datetime.utcnow() + timedelta(seconds=delay_in_seconds);
-	# timestamp = timestamp_pb2.Timestamp();
-	# timestamp.FromDatetime(d);
+	# Convert "seconds from now" into an rfc3339 datetime string.
+	d = datetime.utcnow() + timedelta(seconds=delay_in_seconds);
+	timestamp = timestamp_pb2.Timestamp();
+	timestamp.FromDatetime(d);
 	
-	# parent = task_client.queue_path("bloqboard-bot", "us-east1", "my-appengine-queue");
+	parent = task_client.queue_path("veil-market-bot", "us-east1", "my-appengine-queue");
 
-	# task = {
-	# 	'app_engine_http_request': {
-	# 		'http_method': 'GET',
-	# 		'relative_uri': '/refreshdebts'
-	# 	},
-	# 	'schedule_time' : timestamp
-	# }
+	task = {
+		'app_engine_http_request': {
+			'http_method': 'GET',
+			'relative_uri': '/refreshmarkets'
+		},
+		'schedule_time' : timestamp
+	}
 	
-	# task_client.create_task(parent, task);
+	task_client.create_task(parent, task);
 
 @app.route('/')
 def index():
@@ -142,10 +142,13 @@ def refresh_markets():
 		# replace any keywords with hashtags
 		# TODO put keywords into a map object
 		market_title = market_title.replace(" Ethereum", " #Ethereum");
-		market_title = market_title.replace(" Bitcoin", " #Bitcoin");
+		market_title = market_title.replace(" Bitcoin", " #Bitcoin");		
 		market_title = market_title.replace(" ZRX", " $ZRX");
 		market_title = market_title.replace(" BTC", " $BTC");
 		market_title = market_title.replace(" REP", " $REP");
+		
+		market_title = market_title.replace(" Best Picture", " #BestPicture");
+		market_title = market_title.replace(" Academy Awards?", " #AcademyAwards?");
 
 		market_type = market["type"]
 
@@ -217,10 +220,12 @@ def refresh_markets():
 		tweetStatus("".join(tweet_text), market_media);
 
 
-	# if (has_untweeted_markets):
-		# TODO schedule a follow up task quickly after this
-	# else:
-		# TODO schedule a follow up task leisurely after this
+	if (has_untweeted_markets):
+		# schedule a follow up task quickly after this
+		scheduleRefreshTask(70); # 70 seconds if we're going to immediately tweet again 
+	else:
+		# schedule a follow up task leisurely after this
+		scheduleRefreshTask(60 * 10); # 10 minutes if we're going to check again fresh
 
 	return "{x}";
 
