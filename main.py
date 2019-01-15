@@ -29,8 +29,8 @@ import ssl
 import twitter
 
 # API
-VEIL_MARKET_URL = "https://kovan.veil.co/market/"
-VEIL_ENDPOINT_MARKETS = "https://api.kovan.veil.market/api/v1/markets?status=open&page=0";
+VEIL_MARKET_URL = "https://app.veil.co/market/"
+VEIL_ENDPOINT_MARKETS = "https://api.veil.co/api/v1/markets?status=open&page=0";
 
 app = Flask(__name__)
 
