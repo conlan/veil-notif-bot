@@ -1,2 +1,2 @@
 # veil-notif-bot
-Hear about new markets as they're created.
+Hear about new markets as they're created and expired.
