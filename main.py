@@ -30,7 +30,8 @@ import twitter
 
 # API
 VEIL_MARKET_URL = "https://app.veil.co/market/"
-VEIL_ENDPOINT_MARKETS = "https://api.veil.co/api/v1/markets?status=open&page=0";
+VEIL_ENDPOINT_RESOLVED_MARKETS = "https://api.veil.co/api/v1/markets?status=resolved&page=0";
+VEIL_ENDPOINT_OPEN_MARKETS = "https://api.veil.co/api/v1/markets?status=open&page=0";
 
 app = Flask(__name__)
 
@@ -53,7 +54,7 @@ def tweetStatus(status, media):
 	api.PostUpdate(status, media=media);
 
 
-def scheduleRefreshTask(delay_in_seconds):
+def scheduleRefreshTask(endpoint, delay_in_seconds):
 	# schedule the next call to refresh debts here
 	task_client = tasks_v2beta3.CloudTasksClient()
 
@@ -67,16 +68,181 @@ def scheduleRefreshTask(delay_in_seconds):
 	task = {
 		'app_engine_http_request': {
 			'http_method': 'GET',
-			'relative_uri': '/refreshmarkets'
+			'relative_uri': endpoint
 		},
 		'schedule_time' : timestamp
 	}
 	
 	task_client.create_task(parent, task);
 
+# replace any keywords with hashtags
+def process_market_title(market_title):	
+	# TODO put keywords into a map object
+	market_title = market_title.replace(" Ethereum", " #Ethereum");
+	market_title = market_title.replace(" Bitcoin", " #Bitcoin");		
+
+	market_title = market_title.replace(" ZRX", " $ZRX");
+	market_title = market_title.replace(" BTC", " $BTC");
+	market_title = market_title.replace(" ETC", " $ETC");
+	market_title = market_title.replace(" ETH", " $ETH");
+	market_title = market_title.replace(" GRIN", " $GRIN");
+	market_title = market_title.replace(" REP", " $REP");
+	
+	market_title = market_title.replace(" Best Picture", " #BestPicture");
+	market_title = market_title.replace(" Academy Awards?", " #AcademyAwards?");
+	return market_title;
+
+def populate_tweet_text_from_market(market, tweet_text, decorations):
+	market_title = market["name"];
+
+	market_title = process_market_title(market_title);
+
+	market_type = market["type"]
+
+	market_slug = market["slug"];
+
+	market_url = VEIL_MARKET_URL + market_slug;
+
+	market_channel = market["channel"];
+
+	# compose the tweet		
+	tweet_text.append("\"");
+	tweet_text.append(market_title);
+	tweet_text.append("\"");
+
+	# scalar work
+	if (market_type == "scalar"):
+		market_denomination = market["denomination"];
+
+		# format correctly for USD denomination
+		market_min_price = market["min_price"];
+		market_min_price = str(from_wei(int(market_min_price), 'ether'));
+		if (market_denomination == "USD"):
+			market_min_price = "{:,.2f}".format(float(market_min_price));
+
+		market_max_price = market["max_price"];
+		market_max_price = str(from_wei(int(market_max_price), 'ether'));
+		if (market_denomination == "USD"):
+			market_max_price = "{:,.2f}".format(float(market_max_price));
+
+		tweet_text.append(" (");
+		tweet_text.append(str(market_min_price));
+		tweet_text.append(" ");
+		tweet_text.append(market_denomination);
+		tweet_text.append(" - ");
+		tweet_text.append(str(market_max_price));
+		tweet_text.append(" ");
+		tweet_text.append(market_denomination);
+		tweet_text.append(")");
+
+	tweet_text.append(" ");
+	tweet_text.append(market_url);
+
+	# append channel as a hashtag if possible
+	if (market_channel != None):
+		tweet_text.append(" #");
+		tweet_text.append(market_channel);
+
+		if (market_channel in decorations):
+			# append this channel's emoji decoration
+			tweet_text.append(" ");
+			tweet_text.append(decorations[market_channel]);
+
 @app.route('/')
 def index():
 	return "{}";
+
+def load_markets(url):
+	ctx = ssl.create_default_context()
+	ctx.check_hostname = False
+	ctx.verify_mode = ssl.CERT_NONE
+
+	url = VEIL_ENDPOINT_RESOLVED_MARKETS;
+
+	print(url);
+
+	f = urllib.request.urlopen(url, context=ctx)
+
+	markets = json.loads(f.read().decode('utf-8'));
+
+	results = markets["data"]["results"];
+
+	# reverse the results so that the oldest resolved market is first
+	results.reverse();
+
+	return results;
+
+@app.route('/checkforresolved')	
+def refresh_resolved_markets():
+	ds = datastore.Client();
+
+	resolved_data = None;
+
+	query = ds.query(kind='resolved');
+
+	query_iterator = query.fetch();
+
+	for entity in query_iterator:
+		resolved_data = entity;
+		break;
+
+	if (resolved_data is None):
+		return "xx"; # TODO
+
+	tweetedList = resolved_data["tweetedList"];
+
+	decorations = json.loads(resolved_data["decorations"]);
+
+	results = load_markets(VEIL_ENDPOINT_RESOLVED_MARKETS);
+
+	has_untweeted_markets = False;
+
+	tweet_text = [];
+
+	for market in results:
+		market_uid = market["uid"];
+
+		# continue if we encounter a market already tweeted
+		if (market_uid in tweetedList):
+			print("Already tweeted " + market_uid);
+			continue;
+
+		# check if we already tweeted something, if so then we need to call this quickly again to work through the rest
+		# of the list
+		if (len(tweet_text) > 0):
+			has_untweeted_markets = True;
+			break;
+
+		# add this market id to the tweeted list so that we don't tweet it again subsequently
+		tweetedList.append(market_uid);
+
+		tweet_text.append("⏲️ MARKET EXPIRED: ");
+		
+		populate_tweet_text_from_market(market, tweet_text, decorations);
+
+		market_media = None;
+		market_metadata = market["metadata"];
+		if ((market_metadata is None) == False):
+			if ("image_url" in market_metadata):
+				market_media = market_metadata["image_url"];
+
+		# update the tweeted list
+		resolved_data.update({
+			"tweetedList" : tweetedList
+	    })
+		ds.put(resolved_data);
+
+		# make the tweet
+		tweetStatus("".join(tweet_text), market_media);
+
+	if (has_untweeted_markets):
+		# schedule a follow up task quickly after this
+		scheduleRefreshTask("/checkforresolved", 70); # 70 seconds if we're going to immediately tweet again 
+	else:
+		# schedule a follow up task leisurely after this
+		scheduleRefreshTask("/checkforresolved", 60 * 5); # 5 minutes if we're going to check again fresh
+
+	return "{x}";
 
 @app.route('/refreshmarkets')
 def refresh_markets():
@@ -93,28 +259,13 @@ def refresh_markets():
 		break;
 
 	if (defaults_data is None):
-		return "xx";
+		return "xx"; # TODO
 
 	tweetedList = defaults_data["tweetedList"];
 
 	decorations = json.loads(defaults_data["decorations"]);
 
-	ctx = ssl.create_default_context()
-	ctx.check_hostname = False
-	ctx.verify_mode = ssl.CERT_NONE
-
-	url = VEIL_ENDPOINT_MARKETS;
-
-	print(url);
-
-	f = urllib.request.urlopen(url, context=ctx)
-
-	markets = json.loads(f.read().decode('utf-8'));
-
-	results = markets["data"]["results"];
-
-	# reverse the results so that the oldest market is first
-	results.reverse();
+	results = load_markets(VEIL_ENDPOINT_OPEN_MARKETS);	
 
 	has_untweeted_markets = False;
 
@@ -137,78 +288,13 @@ def refresh_markets():
 		# add this market id to the tweeted list so that we don't tweet it again subsequently
 		tweetedList.append(market_uid);
 		
-		market_title = market["name"];
+		populate_tweet_text_from_market(market, tweet_text, decorations);
 
-		# replace any keywords with hashtags
-		# TODO put keywords into a map object
-		market_title = market_title.replace(" Ethereum", " #Ethereum");
-		market_title = market_title.replace(" Bitcoin", " #Bitcoin");		
-		market_title = market_title.replace(" ZRX", " $ZRX");
-		market_title = market_title.replace(" BTC", " $BTC");
-		market_title = market_title.replace(" REP", " $REP");
-		
-		market_title = market_title.replace(" Best Picture", " #BestPicture");
-		market_title = market_title.replace(" Academy Awards?", " #AcademyAwards?");
-
-		market_type = market["type"]
-
-		market_slug = market["slug"];
-
-		market_url = VEIL_MARKET_URL + market_slug;
-
-		market_channel = market["channel"];
-
-		# metadata work
+		market_media = None;	
 		market_metadata = market["metadata"];
-
-		market_media = None;
-		
 		if ((market_metadata is None) == False):
 			if ("image_url" in market_metadata):
 				market_media = market_metadata["image_url"];
-
-		# compose the tweet		
-		tweet_text.append("\"");
-		tweet_text.append(market_title);
-		tweet_text.append("\"");
-
-		# scalar work
-		if (market_type == "scalar"):
-			market_denomination = market["denomination"];
-
-			# format correctly for USD denomination
-			market_min_price = market["min_price"];
-			market_min_price = str(from_wei(int(market_min_price), 'ether'));
-			if (market_denomination == "USD"):
-				market_min_price = "{:,.2f}".format(float(market_min_price));
-
-			market_max_price = market["max_price"];
-			market_max_price = str(from_wei(int(market_max_price), 'ether'));
-			if (market_denomination == "USD"):
-				market_max_price = "{:,.2f}".format(float(market_max_price));
-
-			tweet_text.append(" (");
-			tweet_text.append(str(market_min_price));
-			tweet_text.append(" ");
-			tweet_text.append(market_denomination);
-			tweet_text.append(" - ");
-			tweet_text.append(str(market_max_price));
-			tweet_text.append(" ");
-			tweet_text.append(market_denomination);
-			tweet_text.append(")");
-
-		tweet_text.append(" ");
-		tweet_text.append(market_url);
-
-		# append channel as a hashtag if possible
-		if (market_channel != None):
-			tweet_text.append(" #");
-			tweet_text.append(market_channel);
-
-			if (market_channel in decorations):
-				# append this channel's emoji decoration
-				tweet_text.append(" ");
-				tweet_text.append(decorations[market_channel]);
 
 		# update the tweeted list
 		defaults_data.update({
@@ -219,13 +305,12 @@ def refresh_markets():
 		# make the tweet
 		tweetStatus("".join(tweet_text), market_media);
 
-
 	if (has_untweeted_markets):
 		# schedule a follow up task quickly after this
-		scheduleRefreshTask(70); # 70 seconds if we're going to immediately tweet again 
+		scheduleRefreshTask("/refreshmarkets", 70); # 70 seconds if we're going to immediately tweet again 
 	else:
 		# schedule a follow up task leisurely after this
-		scheduleRefreshTask(60 * 10); # 10 minutes if we're going to check again fresh
+		scheduleRefreshTask("/refreshmarkets", 60 * 5); # 5 minutes if we're going to check again fresh
 
 	return "{x}";
 
