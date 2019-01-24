@@ -157,8 +157,6 @@ def load_markets(url):
 	ctx.check_hostname = False
 	ctx.verify_mode = ssl.CERT_NONE
 
-	url = VEIL_ENDPOINT_RESOLVED_MARKETS;
-
 	print(url);
 
 	f = urllib.request.urlopen(url, context=ctx)
