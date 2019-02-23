@@ -46,8 +46,6 @@ def tweetStatus(status, media):
 
 	print(status);
 
-	return; # TODO REMOVE
-
 	api = twitter.Api(consumer_key=twitter_consumer_key,
                   consumer_secret=twitter_consumer_secret,
                   access_token_key=twitter_access_token,
@@ -58,8 +56,7 @@ def tweetStatus(status, media):
 
 def scheduleRefreshTask(endpoint, delay_in_seconds):
 	print("Scheduling: " + endpoint + " in " + str(delay_in_seconds));
-
-	return; # TODO REMOVE
+	
 	# schedule the next call to refresh debts here
 	task_client = tasks_v2beta3.CloudTasksClient()
 
