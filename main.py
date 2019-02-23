@@ -30,12 +30,12 @@ import twitter
 
 # API
 VEIL_MARKET_URL = "https://app.veil.co/market/"
-VEIL_ENDPOINT_RESOLVED_MARKETS = "https://api.veil.co/api/v1/markets?status=resolved&page=0";
-VEIL_ENDPOINT_OPEN_MARKETS = "https://api.veil.co/api/v1/markets?status=open&page=0";
+VEIL_ENDPOINT_RESOLVED_MARKETS = "https://api.veil.co/api/v1/markets?status=resolved&page=";
+VEIL_ENDPOINT_OPEN_MARKETS = "https://api.veil.co/api/v1/markets?status=open&page=";
 
 app = Flask(__name__)
 
-def tweetStatus(status, media):
+def tweetStatus(status, media):	
 	# load these from a gitignored file
 	twitter_credentials = json.loads(open("./twitter_credentials.json", "r").read());
 
@@ -46,6 +46,8 @@ def tweetStatus(status, media):
 
 	print(status);
 
+	return; # TODO REMOVE
+
 	api = twitter.Api(consumer_key=twitter_consumer_key,
                   consumer_secret=twitter_consumer_secret,
                   access_token_key=twitter_access_token,
@@ -55,6 +57,9 @@ def tweetStatus(status, media):
 
 
 def scheduleRefreshTask(endpoint, delay_in_seconds):
+	print("Scheduling: " + endpoint + " in " + str(delay_in_seconds));
+
+	return; # TODO REMOVE
 	# schedule the next call to refresh debts here
 	task_client = tasks_v2beta3.CloudTasksClient()
 
@@ -165,13 +170,24 @@ def load_markets(url):
 
 	results = markets["data"]["results"];
 
+	total = int(markets["data"]["total"]);
+
+	page_size = int(markets["data"]["page_size"]);
+
 	# reverse the results so that the oldest resolved market is first
 	results.reverse();
 
-	return results;
+	return results, total, page_size;
 
 @app.route('/checkforresolved')	
 def refresh_resolved_markets():
+	page = request.args.get("page");
+
+	if (page is None):
+		page = "0";
+
+	print("Using page: " + str(page));
+
 	ds = datastore.Client();
 
 	resolved_data = None;
@@ -187,11 +203,12 @@ def refresh_resolved_markets():
 	if (resolved_data is None):
 		return "xx"; # TODO
 
-	tweetedList = resolved_data["tweetedList"];
+	tweetedListJson = resolved_data["tweetedListJson"];
+	tweetedList = json.loads(tweetedListJson);
 
 	decorations = json.loads(resolved_data["decorations"]);
 
-	results = load_markets(VEIL_ENDPOINT_RESOLVED_MARKETS);
+	results, total_results, page_size = load_markets(VEIL_ENDPOINT_RESOLVED_MARKETS + page);
 
 	has_untweeted_markets = False;
 
@@ -226,7 +243,7 @@ def refresh_resolved_markets():
 
 		# update the tweeted list
 		resolved_data.update({
-			"tweetedList" : tweetedList
+			"tweetedListJson" : json.dumps(tweetedList)
 	    })
 		ds.put(resolved_data);
 
@@ -235,15 +252,34 @@ def refresh_resolved_markets():
 
 	if (has_untweeted_markets):
 		# schedule a follow up task quickly after this
-		scheduleRefreshTask("/checkforresolved", 70); # 70 seconds if we're going to immediately tweet again 
+		# use the same page
+		scheduleRefreshTask("/checkforresolved?page=" + str(page), 70); # 70 seconds if we're going to immediately tweet again 
 	else:
-		# schedule a follow up task leisurely after this
-		scheduleRefreshTask("/checkforresolved", 60 * 5); # 5 minutes if we're going to check again fresh
+		num_results = len(results);
+
+		has_more_results = ((int(page) + 1) * page_size) < total_results
+
+		if ((num_results > 0) and has_more_results):
+			page = int(page) + 1;
+
+			# if we had results, but untweeted markets, then go on to the next page
+			# schedule a follow up task leisurely after this
+			scheduleRefreshTask("/checkforresolved?page=" + str(page), 30); # 30 seconds
+		else:
+			# else we had 0 results and no untweeted markets, so let's start from the very beginning in 5 minutes time
+			scheduleRefreshTask("/checkforresolved", 60 * 5); # 5 minutes
 
 	return "{x}";
 
 @app.route('/refreshmarkets')
 def refresh_markets():
+	page = request.args.get("page");
+
+	if (page is None):
+		page = "0";
+
+	print("Using page: " + str(page));
+
 	ds = datastore.Client();
 
 	defaults_data = None;
@@ -258,12 +294,13 @@ def refresh_markets():
 
 	if (defaults_data is None):
 		return "xx"; # TODO
-
-	tweetedList = defaults_data["tweetedList"];
+	
+	tweetedListJson = defaults_data["tweetedListJson"];
+	tweetedList = json.loads(tweetedListJson);
 
 	decorations = json.loads(defaults_data["decorations"]);
 
-	results = load_markets(VEIL_ENDPOINT_OPEN_MARKETS);	
+	results, total_results, page_size = load_markets(VEIL_ENDPOINT_OPEN_MARKETS + page);
 
 	has_untweeted_markets = False;
 
@@ -296,7 +333,7 @@ def refresh_markets():
 
 		# update the tweeted list
 		defaults_data.update({
-			"tweetedList" : tweetedList
+			"tweetedListJson" : json.dumps(tweetedList)
 	    })
 		ds.put(defaults_data);
 
@@ -305,10 +342,23 @@ def refresh_markets():
 
 	if (has_untweeted_markets):
 		# schedule a follow up task quickly after this
-		scheduleRefreshTask("/refreshmarkets", 70); # 70 seconds if we're going to immediately tweet again 
+		# use the same page
+		scheduleRefreshTask("/refreshmarkets?page=" + str(page), 70); # 70 seconds if we're going to immediately tweet again 
 	else:
-		# schedule a follow up task leisurely after this
-		scheduleRefreshTask("/refreshmarkets", 60 * 5); # 5 minutes if we're going to check again fresh
+		num_results = len(results);
+
+		has_more_results = ((int(page) + 1) * page_size) < total_results
+
+		if ((num_results > 0) and has_more_results):
+			page = int(page) + 1;
+
+			# if we had results, but untweeted markets, then go on to the next page
+			# schedule a follow up task leisurely after this
+			scheduleRefreshTask("/refreshmarkets?page=" + str(page), 30); # 30 seconds
+		else:
+			# else we had 0 results and no untweeted markets, so let's start from the very beginning in 5 minutes time
+			scheduleRefreshTask("/refreshmarkets", 60 * 5); # 5 minutes
+
 
 	return "{x}";
 
